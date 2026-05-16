@@ -12,6 +12,14 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.distance import pdist, squareform
 
+DEFAULT_TEMPORAL_WINDOW = 10
+DEFAULT_LLE_STEPS = 20
+DEFAULT_LLE_FIT_RANGE = (1, 10)
+DEFAULT_RECURRENCE_PERCENTILE = 10
+DEFAULT_RQA_MIN_LINE_LENGTH = 2
+LLE_CHAOTIC_THRESHOLD = 0.01
+DET_PERIODIC_THRESHOLD = 0.9
+
 
 @dataclass
 class AnalysisResults5D:
@@ -110,7 +118,7 @@ def save_pca_attractor_3d(projected: np.ndarray, output_dir: str) -> None:
 def find_poincare_crossings(projected: np.ndarray) -> Tuple[np.ndarray, float]:
     """Find positive-slope crossings of the PC1 median hyperplane."""
     pc1 = projected[:, 0]
-    threshold = float(np.median(pc1))
+    threshold = float(np.percentile(pc1, 50))
 
     crossings: List[Tuple[float, float]] = []
     for index in range(len(pc1) - 1):
@@ -141,9 +149,9 @@ def save_poincare_section(points: np.ndarray, threshold: float, output_dir: str)
 
 def rosenstein_lle(
     data: np.ndarray,
-    temporal_window: int = 10,
-    n_steps: int = 20,
-    fit_range: Tuple[int, int] = (1, 10),
+    temporal_window: int = DEFAULT_TEMPORAL_WINDOW,
+    n_steps: int = DEFAULT_LLE_STEPS,
+    fit_range: Tuple[int, int] = DEFAULT_LLE_FIT_RANGE,
 ) -> Tuple[float, np.ndarray, np.ndarray, np.ndarray]:
     """Estimate the largest Lyapunov exponent directly in 5D state space."""
     n_points = data.shape[0]
@@ -155,6 +163,7 @@ def rosenstein_lle(
     distance_matrix = squareform(pdist(truncated, metric="euclidean"))
     indices = np.arange(max_start)
     temporal_mask = np.abs(indices[:, None] - indices[None, :]) <= temporal_window
+    # Mark temporally adjacent candidates as unusable before nearest-neighbor selection.
     distance_matrix[temporal_mask] = np.inf
 
     neighbors = np.argmin(distance_matrix, axis=1)
@@ -206,17 +215,24 @@ def save_lyapunov_plot(
 
 def interpret_lle(lle: float) -> str:
     """Interpret the largest Lyapunov exponent using the requested thresholds."""
-    if lle > 0.01:
+    if lle > LLE_CHAOTIC_THRESHOLD:
         return "System is likely CHAOTIC"
-    if lle < -0.01:
+    if lle < -LLE_CHAOTIC_THRESHOLD:
         return "System is NOT chaotic (stable/periodic)"
     return "System is at the edge of chaos (periodic or quasi-periodic)"
 
 
-def build_recurrence_matrix(data: np.ndarray) -> Tuple[np.ndarray, float]:
-    """Build a recurrence matrix in the original 5D space."""
+def build_recurrence_matrix(
+    data: np.ndarray,
+    percentile: float = DEFAULT_RECURRENCE_PERCENTILE,
+) -> Tuple[np.ndarray, float]:
+    """Build a recurrence matrix in the original 5D space.
+
+    The default threshold is the 10th percentile of all pairwise Euclidean
+    distances, matching the requested analysis recipe for this repository.
+    """
     pairwise_distances = pdist(data, metric="euclidean")
-    epsilon = float(np.percentile(pairwise_distances, 10))
+    epsilon = float(np.percentile(pairwise_distances, percentile))
     recurrence = (squareform(pairwise_distances) <= epsilon).astype(int)
     np.fill_diagonal(recurrence, 1)
     return recurrence, epsilon
@@ -250,7 +266,10 @@ def run_lengths(sequence: Iterable[int], min_length: int = 2) -> List[int]:
     return lengths
 
 
-def compute_rqa_metrics(recurrence: np.ndarray, min_line_length: int = 2) -> Dict[str, float]:
+def compute_rqa_metrics(
+    recurrence: np.ndarray,
+    min_line_length: int = DEFAULT_RQA_MIN_LINE_LENGTH,
+) -> Dict[str, float]:
     """Compute RR, DET, Lmax, Lmean, ENT, LAM, and TT from the recurrence matrix."""
     n_points = recurrence.shape[0]
     off_diagonal_mask = ~np.eye(n_points, dtype=bool)
@@ -270,9 +289,9 @@ def compute_rqa_metrics(recurrence: np.ndarray, min_line_length: int = 2) -> Dic
     lmean = float(np.mean(diagonal_lengths)) if diagonal_lengths else 0.0
 
     if diagonal_lengths:
-        values, counts = np.unique(diagonal_lengths, return_counts=True)
+        _, counts = np.unique(diagonal_lengths, return_counts=True)
         probabilities = counts / counts.sum()
-        ent = float(-np.sum(probabilities * np.log(probabilities)))
+        ent = max(float(-np.sum(probabilities * np.log(probabilities))), 0.0)
     else:
         ent = 0.0
 
@@ -297,13 +316,13 @@ def compute_rqa_metrics(recurrence: np.ndarray, min_line_length: int = 2) -> Dic
 def synthesize_verdict(lle: float, rqa_metrics: Dict[str, float]) -> str:
     """Synthesize LLE and RQA into a final chaos verdict."""
     det = rqa_metrics["DET"]
-    if lle > 0.01 and det < 0.9:
+    if lle > LLE_CHAOTIC_THRESHOLD and det < DET_PERIODIC_THRESHOLD:
         return "Chaotic: positive LLE and lower DET both support sensitive, irregular dynamics."
-    if lle > 0.01:
+    if lle > LLE_CHAOTIC_THRESHOLD:
         return "Likely chaotic: the positive LLE indicates exponential divergence, while high DET shows the dynamics remain strongly deterministic."
-    if lle < -0.01 and det > 0.9:
+    if lle < -LLE_CHAOTIC_THRESHOLD and det > DET_PERIODIC_THRESHOLD:
         return "Not chaotic: negative LLE and high DET are consistent with stable or periodic dynamics."
-    if lle < -0.01:
+    if lle < -LLE_CHAOTIC_THRESHOLD:
         return "Likely not chaotic: the negative LLE does not support chaos, though recurrence structure is less clearly periodic."
     return "Edge of chaos or mixed evidence: the LLE is near zero, so longer or cleaner data may be needed for a stronger conclusion."
 
@@ -313,7 +332,7 @@ def print_rqa_metrics(rqa_metrics: Dict[str, float]) -> None:
     print("\n--- Recurrence Quantification Analysis ---")
     for key in ["RR", "DET", "Lmax", "Lmean", "ENT", "LAM", "TT"]:
         print(f"  {key} = {rqa_metrics[key]:.6f}")
-    if rqa_metrics["DET"] > 0.9:
+    if rqa_metrics["DET"] > DET_PERIODIC_THRESHOLD:
         print("  DET interpretation: DET > 0.9 suggests deterministic/periodic dynamics.")
     else:
         print("  DET interpretation: lower DET suggests chaos or noise.")
@@ -368,16 +387,21 @@ def run_analysis(csv_path: str, output_dir: str = "output") -> AnalysisResults5D
     print(f"\nPoincaré crossings found: {len(poincare_points)}")
     save_poincare_section(poincare_points, threshold, output_dir)
 
-    lle, steps, mean_log_divergence, fit_line = rosenstein_lle(data, temporal_window=10, n_steps=20, fit_range=(1, 10))
+    lle, steps, mean_log_divergence, fit_line = rosenstein_lle(
+        data,
+        temporal_window=DEFAULT_TEMPORAL_WINDOW,
+        n_steps=DEFAULT_LLE_STEPS,
+        fit_range=DEFAULT_LLE_FIT_RANGE,
+    )
     lle_interpretation = interpret_lle(lle)
     print(f"\nLargest Lyapunov Exponent (LLE) = {lle:.6f}")
     print(f"Interpretation: {lle_interpretation}")
     save_lyapunov_plot(steps, mean_log_divergence, fit_line, lle, output_dir)
 
-    recurrence, epsilon = build_recurrence_matrix(data)
+    recurrence, epsilon = build_recurrence_matrix(data, percentile=DEFAULT_RECURRENCE_PERCENTILE)
     print(f"\nRecurrence threshold epsilon (10th percentile) = {epsilon:.6f}")
     save_recurrence_plot(recurrence, output_dir)
-    rqa_metrics = compute_rqa_metrics(recurrence, min_line_length=2)
+    rqa_metrics = compute_rqa_metrics(recurrence, min_line_length=DEFAULT_RQA_MIN_LINE_LENGTH)
     print_rqa_metrics(rqa_metrics)
 
     verdict = synthesize_verdict(lle, rqa_metrics)
