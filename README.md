@@ -50,3 +50,58 @@ The script creates the output directory automatically (default: `output/`) and s
 - `output/recurrence_plot.png`
 
 It also prints a summary with optimal τ, optimal m, LLE, and RQA metrics.
+
+## Phase Space Analysis 5D
+
+This repository also includes `phase_space_analysis_5d.py` for multivariate phase space analysis of CSV files containing one 5D state vector per row (for example `data/vectors_5d.csv`).
+
+### What it computes
+
+- **Data loading and preprocessing** with per-dimension z-score normalization
+- **PCA projection** in 2D and 3D using NumPy SVD for attractor visualization
+- **Poincaré section** from positive-slope crossings of the hyperplane `PC1 = median(PC1)`
+- **Largest Lyapunov Exponent (LLE)** using Rosenstein's algorithm directly in the 5D state space
+- **Recurrence plot** and RQA metrics: RR, DET, Lmax, Lmean, ENT, LAM, TT
+- **Chaos summary report** combining LLE and RQA evidence
+
+### Input
+
+Use a CSV with 5 columns and no header, where each row is one time step:
+
+```text
+0.12,1.03,-0.44,2.10,0.55
+0.14,1.01,-0.40,2.05,0.60
+...
+```
+
+### Run
+
+Default input:
+
+```bash
+python phase_space_analysis_5d.py
+```
+
+Custom input path:
+
+```bash
+python phase_space_analysis_5d.py --input path/to/file.csv
+```
+
+Custom output directory:
+
+```bash
+python phase_space_analysis_5d.py --input data/vectors_5d.csv --output output
+```
+
+### Outputs
+
+The script creates the output directory automatically (default: `output/`) and saves:
+
+- `output/attractor_pca_2d.png`
+- `output/attractor_pca_3d.png`
+- `output/poincare_section_5d.png`
+- `output/lyapunov_5d.png`
+- `output/recurrence_plot_5d.png`
+
+It also prints basic preprocessing statistics, PCA explained variance, the LLE interpretation, RQA metrics, and a structured chaos report.
