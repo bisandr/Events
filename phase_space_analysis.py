@@ -48,7 +48,8 @@ def average_mutual_information(series: np.ndarray, max_lag: int = 50, bins: int 
         py = np.sum(pxy, axis=0, keepdims=True)
 
         valid = pxy > 0
-        ami = np.sum(pxy[valid] * np.log(pxy[valid] / (px @ py)[valid]))
+        expected = px * py
+        ami = np.sum(pxy[valid] * np.log(pxy[valid] / expected[valid]))
         ami_values.append(float(ami))
 
     return np.asarray(ami_values)
@@ -209,9 +210,9 @@ def rqa_metrics(recurrence: np.ndarray, min_line: int = 2) -> Dict[str, float]:
         diag = np.diag(recurrence, k=offset)
         diag_lengths.extend(run_lengths(diag, min_length=min_line))
 
-    recurrence_without_identity = max(recurrence_points - n, 1.0)
+    recurrence_without_identity = recurrence_points - n
     diag_points = float(np.sum(diag_lengths))
-    det = 100.0 * diag_points / recurrence_without_identity
+    det = 100.0 * diag_points / recurrence_without_identity if recurrence_without_identity > 0 else 0.0
     lmax = float(np.max(diag_lengths)) if diag_lengths else 0.0
     lmean = float(np.mean(diag_lengths)) if diag_lengths else 0.0
 
@@ -227,7 +228,7 @@ def rqa_metrics(recurrence: np.ndarray, min_line: int = 2) -> Dict[str, float]:
         vertical_lengths.extend(run_lengths(recurrence[:, col], min_length=min_line))
 
     vertical_points = float(np.sum(vertical_lengths))
-    lam = 100.0 * vertical_points / recurrence_without_identity
+    lam = 100.0 * vertical_points / recurrence_without_identity if recurrence_without_identity > 0 else 0.0
     tt = float(np.mean(vertical_lengths)) if vertical_lengths else 0.0
 
     return {
@@ -314,7 +315,7 @@ def save_phase_portraits(embedding3d: np.ndarray, output_dir: str) -> None:
 
 
 def save_poincare_plot(points: np.ndarray, output_dir: str) -> None:
-    """Save Poincare section scatter plot."""
+    """Save Poincaré section scatter plot."""
     plt.figure(figsize=(6, 6))
     if points.size:
         plt.scatter(points[:, 0], points[:, 1], s=15)
@@ -366,6 +367,8 @@ def run_analysis(csv_path: str, output_dir: str = "output") -> AnalysisResults:
     m = choose_embedding_dimension(dimensions, fnn_percentages, threshold=5.0)
     save_fnn_plot(dimensions, fnn_percentages, m, output_dir)
 
+    if m < 3:
+        print("Note: using m=3 for 3D/Poincaré plotting while keeping estimated m for metrics.")
     embedding3d = delay_embedding(series, m=max(3, m), tau=tau)[:, :3]
     save_phase_portraits(embedding3d, output_dir)
 
@@ -379,7 +382,7 @@ def run_analysis(csv_path: str, output_dir: str = "output") -> AnalysisResults:
     save_lyapunov_plot(t, divergence, fit_line, output_dir)
 
     distances = squareform(pdist(embedding_m))
-    epsilon = 0.1 * np.max(distances)
+    epsilon = 0.1 * np.max(distances)  # Required threshold: 10% of maximum pairwise distance.
     recurrence = (distances <= epsilon).astype(int)
     save_recurrence_plot(recurrence, output_dir)
 
