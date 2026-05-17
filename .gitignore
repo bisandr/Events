@@ -1,7 +1,7 @@
 # --- Project-specific ignores ---
 data/
 about/
-output/
+output*/
 
 # --- Python standard ignores ---
 __pycache__/
@@ -32,4 +32,3 @@ Thumbs.db
 
 # File-types
 *.png
-*.csv
