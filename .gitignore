@@ -32,3 +32,5 @@ Thumbs.db
 
 # File-types
 *.png
+*.ipynb
+*.csv
